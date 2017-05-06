@@ -137,6 +137,8 @@ bool enable_api = false;
 time_t last_call_of_traffic_recalculation;
 
 std::string cli_stats_file_path = "/tmp/fastnetmon.dat";
+//force_unbanlist
+std::string unbanlist_path = "/tmp/unbanlist";
 
 unsigned int stats_thread_sleep_time = 3600;
 unsigned int stats_thread_initial_call_delay = 30;
@@ -302,6 +304,9 @@ unsigned int check_period = 3;
 
 // Standard ban time in seconds for all attacks but you can tune this value
 int global_ban_time = 1800;
+
+//Standard  detect time in seconds for unban ip in list
+int unban_time = 1800;
 
 // We calc average pps/bps for this time
 double average_calculation_amount = 15;
@@ -1099,6 +1104,14 @@ bool load_configuration_file() {
     if (configuration_map.count("monitor_local_ip_addresses") != 0) {
         monitor_local_ip_addresses = configuration_map["monitor_local_ip_addresses"] == "on" ? true : false;
     }
+
+	if (configuration_map.count("chk_time") != 0)  {
+		unban_time = convert_string_to_integer(configuration_map["chk_time"]);
+	}
+
+	if (configuration_map.count("unbanlist") !=0){
+		unbanlist_path = configuration_map["unbanlist"];
+	}
 
 #ifdef FASTNETMON_API
     if (configuration_map.count("enable_api") != 0) {
@@ -2588,6 +2601,7 @@ int main(int argc, char** argv) {
             ("daemonize", "detach from the terminal")
             ("configuration_file", po::value<std::string>(), "set path to custom configuration file")
             ("log_file", po::value<std::string>(), "set path to custom log file")
+			("unbanlist", po::value<std::string>(), "set path to custom unbanlist")
         ;
 
         po::variables_map vm;
@@ -2617,6 +2631,12 @@ int main(int argc, char** argv) {
             log_file_path = vm["log_file"].as<std::string>();
             std::cout << "We will use custom path to log file: " << log_file_path << std::endl;
         }
+
+		if(vm.count("unbanlist")){
+			unbanlist_path = vm["unbanlist"].as<std::string>();
+			std::cout << "Will use unbanlist: " << unbanlist_path <<std::endl;
+		}
+
     } catch (po::error& e) {
         std::cerr << "ERROR: " << e.what() << std::endl << std::endl; 
         exit(EXIT_FAILURE);
@@ -3273,15 +3293,36 @@ void call_ban_handlers(uint32_t client_ip, attack_details& current_attack, std::
     }
 #endif
 }
+//
+void unban(std::string ipstr) {
 
+        if (!is_v4_host(ipstr)) {
+            logger << log4cpp::Priority::ERROR << "[force unban] IP: " << ipstr << " bad format";
+			return;
+        }
+		uint32_t banned_ip = convert_ip_as_string_to_uint(ipstr);
+
+		if (ban_list.count(banned_ip) == 0) {
+            logger << log4cpp::Priority::ERROR << "[force unban] Could not find IP: "<< ipstr << " in ban list";
+			return;
+        }
+
+		banlist_item ban_details = ban_list[banned_ip];
+		call_unban_handlers(banned_ip, ban_details);
+		logger << log4cpp::Priority::INFO << "[force unban] remove IP from ban list";
+
+        ban_list_mutex.lock();
+        ban_list.erase(banned_ip);
+        ban_list_mutex.unlock();
+}
 
 /* Thread for cleaning up ban list */
 void cleanup_ban_list() {
     // If we use very small ban time we should call ban_cleanup thread more often
-    if (unban_iteration_sleep_time > global_ban_time) {
-        unban_iteration_sleep_time = int(global_ban_time / 2);
+    if (unban_iteration_sleep_time > unban_time) {
+        unban_iteration_sleep_time = int(unban_time / 2);
 
-        logger << log4cpp::Priority::INFO << "You are using enough small ban time " << global_ban_time
+        logger << log4cpp::Priority::INFO << "You are using enough small ban time " << unban_time
             << " we need reduce unban_iteration_sleep_time twices to " << unban_iteration_sleep_time << " seconds";
     }
 
@@ -3294,6 +3335,24 @@ void cleanup_ban_list() {
         time(&current_time);
 
         std::vector<uint32_t> ban_list_items_for_erase;
+
+		//detect force unban list
+
+		if(file_exists(unbanlist_path)) {
+			std::vector<std::string> unbanlist_x = read_file_to_vector(unbanlist_path);
+			
+			for (std::vector<std::string>::iterator ii = unbanlist_x.begin(); ii != unbanlist_x.end(); ++ii) {
+				unban(*ii);
+			}//endfor
+
+			//clean list
+			std::fstream clean_list;
+			clean_list.open(unbanlist_path.c_str(),std::ios::out);
+			clean_list.close();
+		}else{
+			logger << log4cpp::Priority::INFO << "Can not find unbanlist " << unbanlist_path << ",skip force unban ip";
+		}
+
 
         for (std::map<uint32_t, banlist_item>::iterator itr = ban_list.begin(); itr != ban_list.end(); ++itr) {
             uint32_t client_ip = itr->first;
