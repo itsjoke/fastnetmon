@@ -114,5 +114,3 @@ How I can help project?
 - Share your improvements
 - Test it with different equipment
 - Create feature requests
-
-Author: [Pavel Odintsov](http://ru.linkedin.com/in/podintsov/) pavel.odintsov at gmail.com [Follow my Twitter](https://twitter.com/odintsov_pavel)
