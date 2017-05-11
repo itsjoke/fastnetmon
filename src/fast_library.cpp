@@ -588,7 +588,7 @@ bool read_pid_from_file(pid_t& pid, std::string pid_path) {
 }
 
 bool store_data_to_graphite(unsigned short int graphite_port, std::string graphite_host, graphite_data_t graphite_data) {
-    int client_sockfd = socket(AF_INET, SOCK_STREAM, 0);
+	int client_sockfd = socket(AF_INET, SOCK_STREAM, 0);
 
     if (client_sockfd < 0) {
         return false;
@@ -626,10 +626,11 @@ bool store_data_to_graphite(unsigned short int graphite_port, std::string graphi
 
     close(client_sockfd);
 
-    if (write_result > 0) {
-        return true;
-    } else {
+    if (write_result < 0) {
         return false;
+    } else {
+
+        return true;
     }
 }
 
