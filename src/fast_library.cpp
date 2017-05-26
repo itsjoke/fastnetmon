@@ -588,9 +588,12 @@ bool read_pid_from_file(pid_t& pid, std::string pid_path) {
 }
 
 bool store_data_to_graphite(unsigned short int graphite_port, std::string graphite_host, graphite_data_t graphite_data) {
+    extern log4cpp::Category& logger;
+
 	int client_sockfd = socket(AF_INET, SOCK_STREAM, 0);
 
     if (client_sockfd < 0) {
+		logger << log4cpp::Priority::DEBUG << "can not create socket";
         return false;
     }
 
@@ -604,6 +607,7 @@ bool store_data_to_graphite(unsigned short int graphite_port, std::string graphi
 
     if (pton_result <= 0) {
         close(client_sockfd);
+		logger << log4cpp::Priority::DEBUG << "can not form inet";
         return false;
     }
 
@@ -611,6 +615,7 @@ bool store_data_to_graphite(unsigned short int graphite_port, std::string graphi
 
     if (connect_result < 0) {
         close(client_sockfd);
+		logger << log4cpp::Priority::DEBUG << "can not connect ser";
         return false;
     }
 
@@ -626,11 +631,11 @@ bool store_data_to_graphite(unsigned short int graphite_port, std::string graphi
 
     close(client_sockfd);
 
-    if (write_result < 0) {
-        return false;
-    } else {
-
+    if (write_result > 0) {
         return true;
+    } else {
+		logger << log4cpp::Priority::DEBUG << "write strs err: " << write_result;
+        return false;
     }
 }
 

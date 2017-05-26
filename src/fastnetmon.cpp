@@ -3106,7 +3106,15 @@ void execute_ip_ban(uint32_t client_ip, map_element average_speed_element, std::
     // Store ban time
     time(&current_attack.ban_timestamp);
     // set ban time in seconds
-    current_attack.ban_time = global_ban_time;
+	std::string host_group_name;
+    ban_settings_t current_ban_settings = get_ban_settings_for_this_subnet(customer_subnet, host_group_name);
+
+    if(current_ban_settings.enable_ban_for_ban_time){
+		 current_attack.ban_time = current_ban_settings.ban_time_secs;	
+	}else{
+		 current_attack.ban_time = global_ban_time;
+	}
+	
     current_attack.unban_enabled = unban_enabled;
 
     // Pass main information about attack
@@ -4237,7 +4245,11 @@ ban_settings_t read_ban_settings(configuration_map_t configuration_map, std::str
     if (configuration_map.count(prefix + "ban_for_icmp_bandwidth") != 0) { 
         ban_settings.enable_ban_for_icmp_bandwidth = configuration_map[prefix + "ban_for_icmp_bandwidth"] == "on";
     }   
-
+	
+	if (configuration_map.count(prefix + "ban_for_ban_time") != 0) {
+        ban_settings.enable_ban_for_ban_time = configuration_map[prefix + "ban_for_ban_time"] == "on";
+    }
+	
     // Per protocol pps ban triggers
     if (configuration_map.count(prefix + "ban_for_tcp_pps") != 0) { 
         ban_settings.enable_ban_for_tcp_pps = configuration_map[prefix + "ban_for_tcp_pps"] == "on";
@@ -4287,6 +4299,10 @@ ban_settings_t read_ban_settings(configuration_map_t configuration_map, std::str
 
     if (configuration_map.count(prefix + "threshold_flows") != 0) {
         ban_settings.ban_threshold_flows = convert_string_to_integer(configuration_map[prefix + "threshold_flows"]);
+    }
+
+	if (configuration_map.count(prefix + "ban_time_secs") != 0) {
+        ban_settings.ban_time_secs = convert_string_to_integer(configuration_map[prefix + "ban_time_secs"]);
     }
 
     return ban_settings;

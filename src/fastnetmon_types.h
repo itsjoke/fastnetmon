@@ -243,10 +243,11 @@ class ban_settings_t {
             enable_ban_for_tcp_pps(false), enable_ban_for_tcp_bandwidth(false),
             enable_ban_for_udp_pps(false), enable_ban_for_udp_bandwidth(false),
             enable_ban_for_icmp_pps(false), enable_ban_for_icmp_bandwidth(false),
+			enable_ban_for_ban_time(false),
             ban_threshold_tcp_mbps(0), ban_threshold_tcp_pps(0),
             ban_threshold_udp_mbps(0), ban_threshold_udp_pps(0),
             ban_threshold_icmp_mbps(0), ban_threshold_icmp_pps(0),
-            ban_threshold_mbps(0), ban_threshold_flows(0), ban_threshold_pps(0) {
+            ban_threshold_mbps(0), ban_threshold_flows(0), ban_threshold_pps(0),ban_time_secs(0) {
 
         }
         bool enable_ban;
@@ -263,7 +264,8 @@ class ban_settings_t {
 
         bool enable_ban_for_icmp_pps;
         bool enable_ban_for_icmp_bandwidth;
-
+		bool enable_ban_for_ban_time;
+		
         unsigned int ban_threshold_tcp_mbps;
         unsigned int ban_threshold_tcp_pps;
 
@@ -276,6 +278,7 @@ class ban_settings_t {
         unsigned int ban_threshold_mbps;
         unsigned int ban_threshold_flows;
         unsigned int ban_threshold_pps;
+		unsigned int ban_time_secs;
 };
 
 
