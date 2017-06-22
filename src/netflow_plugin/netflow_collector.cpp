@@ -68,6 +68,39 @@ process_packet_pointer netflow_process_func_ptr = NULL;
 typedef std::map<u_int, struct peer_nf9_template> template_storage_t;
 typedef std::map<std::string, template_storage_t> global_template_storage_t;
 
+// TODO: load,dump cache
+#include <iostream>
+#include <fstream>
+
+//used by tv_sec,gettimeofday
+#include <sys/time.h>
+#include <sys/stat.h>
+
+//add dump cache struct
+	
+	//cache entry 
+	struct cache_entry{
+		u_int		len;				//cache_entry length
+		u_int16_t	template_id;		//as name
+		u_int		num_records;		//number of records
+		u_int		total_len;			//packet total length of this entry
+		u_int		records_map[512];	//dublue int as one pair
+	};
+
+	struct cache_store_hdr{
+		u_int16_t		total;			//all cache eles;
+		char			strkey[16];		//cache key id
+		void*			cache_entrys;	//point to cache_entrys
+	};
+
+typedef   struct cache_store_hdr	cache_store_hdr_t ;
+typedef   struct cache_entry		cache_entry_t;
+
+#define   DUMP_CACHE_FILE "/tmp/dumpcache"
+
+//when recv template packet,update this time.if time of dumpfile is lower than the cache time,action dumping.
+time_t global_dump_time = 0;
+
 global_template_storage_t global_netflow9_templates;
 global_template_storage_t global_netflow10_templates;
 
@@ -260,6 +293,9 @@ int process_netflow_v9_template(u_int8_t* pkt, size_t len, u_int32_t source_id, 
     struct NF9_FLOWSET_HEADER_COMMON* template_header = (struct NF9_FLOWSET_HEADER_COMMON*)pkt;
     struct peer_nf9_template field_template;
 
+	struct timeval now;
+	struct timezone nowz;
+
     if (len < sizeof(*template_header)) {
         logger << log4cpp::Priority::ERROR << "Short netflow v9 flowset template header";
         return 1;
@@ -320,6 +356,10 @@ int process_netflow_v9_template(u_int8_t* pkt, size_t len, u_int32_t source_id, 
                           client_addres_in_string_format, field_template);
     }
 
+	//update template refeash time
+	gettimeofday(&now,&nowz);
+	global_dump_time = now.tv_sec;
+
     return 0;
 }
 
@@ -330,7 +370,7 @@ void add_peer_template(global_template_storage_t& table_for_add,
                        struct peer_nf9_template& field_template) {
 
     std::string key = client_addres_in_string_format + "_" + convert_int_to_string(source_id);
-
+	field_template.template_id =  template_id;
     // logger<< log4cpp::Priority::INFO<<"It's new option template "<<template_id<<" for host:
     // "<<client_addres_in_string_format
     //    <<" with source id: "<<source_id;
@@ -1049,6 +1089,299 @@ void process_netflow_packet_v5(u_int8_t* packet, u_int len, std::string client_a
     }
 }
 
+
+int dump_template(cache_store_hdr_t* hdr){
+		 int i,j;
+		 int key_len,offset;
+		 u_int template_id;
+		 i=0;
+		 key_len=offset=0;
+		 
+		 u_int *p_records=0;
+
+		 netflow9_template_records_map recs;
+		//dump2struct
+		for(global_template_storage_t::iterator itr = global_netflow9_templates.begin();itr != global_netflow9_templates.end();itr++) {
+				//当前模板下有记录,有对应的模板
+				if(itr->second.size()>0){
+					//for(peer_nf9_template::iterator = )
+					//logger << log4cpp::Priority::INFO << "client key: " << itr->first <<  " has " << itr->second.size() << " eles";
+					key_len = strlen(itr->first.c_str());
+					 if(key_len>16){
+						   logger << log4cpp::Priority::ERROR << "template_key is too long";
+					 }
+					 
+					 //render header
+					 strncpy(hdr[i].strkey,itr->first.c_str(),key_len);
+					 hdr[i].total = itr->second.size();
+
+					 if	(hdr[i].total >0){
+						cache_entry_t  *cache_entrys = (cache_entry_t *)calloc(sizeof(cache_entry_t) * hdr[i].total, sizeof(char));
+						
+						if (!cache_entrys){
+							 logger << log4cpp::Priority::ERROR << "cache_entry memory alloc err";
+							 exit(-1);
+						}
+						
+						j=0;
+
+
+
+						//this template includes duplex records				 
+						for(template_storage_t::iterator mitr =itr->second.begin(); mitr != itr->second.end(); mitr++ ){
+							template_id = mitr->second.template_id >>8;
+							//logger << log4cpp::Priority::INFO << "[in] template_key: " << itr->first << " template detail: (" << "template id: " << template_id 
+							//<< "," << "total recond: " << mitr->second.num_records << "," << "total length: "<< mitr->second.total_len<< ", eles: " << hdr[i].total << ")";
+
+							//render entry elements
+							cache_entrys[j].template_id = mitr->second.template_id;
+							cache_entrys[j].num_records = mitr->second.num_records;
+							cache_entrys[j].total_len = mitr->second.total_len;
+							
+							p_records = cache_entrys[j].records_map;
+							
+							//render entry records
+							recs = 	mitr->second.records;
+							
+							//当天记录的详细类型是哪些
+							for(netflow9_template_records_map::iterator vector_itr = recs.begin(); vector_itr != recs.end(); vector_itr++){	
+									//logger << log4cpp::Priority::INFO	<< 	"type_name: " <<  vector_itr->type << " type_len: " << 	vector_itr->len;
+									if((char*)p_records - (char*)cache_entrys[j].records_map >= 512){
+										logger << log4cpp::Priority::ERROR << "records map element is too long,need to check";
+										return -1;
+									}
+
+									*p_records++ = vector_itr->type;
+									*p_records++ = vector_itr->len;
+
+							}//endfor
+
+							j++;
+						}//endfor_template
+					
+						 hdr[i].cache_entrys =  cache_entrys;
+					 } //end_hdr[i].total					 
+					 
+				}//endif_itr.size
+				
+				i++;		  
+		}//endfor
+	 	return 	1;
+}
+
+int dump_cache_to_file(cache_store_hdr_t* hdr){
+	int i;
+	cache_store_hdr_t* p_hdr;
+	
+	p_hdr = hdr;
+
+	//dump2file 
+	int dump_f=open(DUMP_CACHE_FILE,O_TRUNC|O_WRONLY|O_CREAT);
+	if(dump_f<0){
+		logger << log4cpp::Priority::ERROR << "Dump cache file create err,or open err";
+		return -1;
+	}
+	
+	
+	for(i=0;i<global_netflow9_templates.size();i++){
+				int offset=0;
+				int write_bytes;
+
+				//calc buf length
+				offset = sizeof(cache_store_hdr_t);
+				//write down header
+				write_bytes = write(dump_f,(char*)p_hdr,offset);
+
+				//logger << log4cpp::Priority::INFO << "client key: " << p_hdr->strkey <<  " has " << p_hdr->total << " eles" << "all size " << global_netflow9_templates.size();
+
+				if(write_bytes != offset){
+					 logger << log4cpp::Priority::ERROR << "write cache header length error";
+					 return -1;
+				}
+
+				//write cache data
+				if(hdr->cache_entrys){
+					offset = sizeof(cache_entry_t) * p_hdr->total;
+					write_bytes = write(dump_f,(char*)p_hdr->cache_entrys,offset);
+
+					if(write_bytes != offset){
+						logger << log4cpp::Priority::ERROR << "write cache data length error";
+						return -1;
+					}
+				}
+
+				p_hdr ++;
+				//p_hdr += sizeof(cache_store_hdr_t);
+				
+	 }//end for;
+	 close(dump_f);
+	 return 0;
+}
+
+void dump_template_cache(){	
+	//netflow detail see http://www.cisco.com/en/US/technologies/tk648/tk362/technologies_white_paper09186a00800a3db9.html
+	//render struct with template data
+	
+	int global_template_count=0;
+	int result,i;
+	struct stat chk_stat;
+
+	while(1){
+		i=0;
+		if(global_netflow9_templates.size()>0){			
+			//compar cache file,cache time
+			if(stat(DUMP_CACHE_FILE,&chk_stat)==0){
+				if(global_dump_time <= chk_stat.st_mtime){
+						sleep(5);
+						continue;
+				}		
+			}
+			
+			global_template_count = global_netflow9_templates.size();
+
+			cache_store_hdr_t* hdr = (cache_store_hdr_t*) calloc(sizeof(cache_store_hdr_t) * global_template_count,sizeof(char));			
+			
+			if(!hdr){
+				logger << log4cpp::Priority::ERROR << "memory alloc err";
+				exit(-1);
+			}
+			
+			result = dump_template(hdr);
+			if(result<0){
+				logger << log4cpp::Priority::ERROR << "template dump to cache err";
+				free(hdr);
+				continue;
+			}
+
+			result = dump_cache_to_file(hdr);
+			if(result<0){
+				logger << log4cpp::Priority::ERROR << "template cache dump to file err";
+			}
+			
+			//also notify cache_entry for clean			
+			for(;i<global_template_count;i++){
+				
+				if(hdr[i].total>0){
+					   free(hdr[i].cache_entrys);
+				}
+			}
+			
+			free(hdr);
+		}
+		sleep(5);
+	}//endwhile
+}  
+
+ int processcachebuf(char*buf,int cache_f){
+	int i,j;
+	int result;
+	u_int *pos;
+	cache_store_hdr_t *p_hdr;
+	cache_entry_t *p_cache_entry,*p_ca;
+	u_int32_t source_id;
+
+	p_hdr = (cache_store_hdr_t *)buf;
+	
+	//rebulid global_template_storage_t
+
+	//order: records_map  -->  template -->  global_template_storage
+	//Get eles 
+	if(p_hdr->total>0){
+
+		p_cache_entry = (cache_entry_t *)calloc(sizeof(cache_entry_t) * p_hdr->total,sizeof(char));
+		p_ca = p_cache_entry;
+		result = read(cache_f,p_cache_entry,sizeof(cache_entry_t) * p_hdr->total);
+		
+		if(result != (sizeof(cache_entry_t) * p_hdr->total)){
+			logger << log4cpp::Priority::ERROR << "cache ele may be corrupted,skip cache ele";
+			return -1;
+		}
+
+		if(p_cache_entry->num_records > 1000){
+			logger << log4cpp::Priority::ERROR << "cache ele may be corrupted,skip cache ele";
+			return -1;
+		}
+
+		for(i=0;i<p_hdr->total;i++){
+			  //logger << log4cpp::Priority::INFO << "[out] client key: " << p_hdr->strkey << " has " << p_hdr->total << " eles, template detail: (" << "template id: " << p_cache_entry->template_id 
+			  //<< "," << "total recond: " << p_cache_entry->num_records << "," << "total length: "<< p_cache_entry->total_len<< ")";
+			  
+			  struct peer_nf9_template field_template;
+			  //get records_map
+			  netflow9_template_records_map template_records_map;
+			  pos =  p_cache_entry->records_map;
+
+			  for(j=0;j<p_cache_entry->num_records;j++){
+					struct peer_nf9_record current_record;
+					current_record.type = *pos++;
+					current_record.len = *pos++;
+
+					template_records_map.push_back(current_record);
+			  }//forentrys
+			  
+			  field_template.num_records = 	p_cache_entry->num_records;
+			  field_template.total_len =  p_cache_entry->total_len;
+			  field_template.records = template_records_map;
+
+			  std::string key = p_hdr->strkey;
+			  std::vector<std::string> strVec;
+			  
+			  boost::split(strVec, key, boost::is_any_of("_"));
+			  
+			  std::vector<std::string>::iterator it = strVec.begin();
+			 
+			  std::string client_addres_in_string_format = *it++;
+			  source_id = atoi((*it).c_str());
+
+			  add_peer_template(global_netflow9_templates, source_id, p_cache_entry->template_id,
+                          client_addres_in_string_format, field_template);
+			  
+			  p_cache_entry++;
+		}//endforp_hdr
+
+	}//endifp_hdr->total
+	free(p_ca);
+	return 0;
+ }
+
+
+//try to loading cache from file
+int filetocache(){
+	int cache_f,result,read_size;
+	char strkey[16];
+
+	char buf[512]={0};
+	result = 0;
+	
+	cache_f=open(DUMP_CACHE_FILE,O_RDONLY);
+	if(cache_f<0){
+		logger << log4cpp::Priority::ERROR << "cache not exist";
+		return -1;
+	}
+	
+	logger << log4cpp::Priority::INFO << "loading netflow template from cache";
+
+ 	do{
+		read_size = read(cache_f,buf,sizeof(cache_store_hdr_t));
+		//logger << log4cpp::Priority::ERROR << "debug read file length: " << read_size << " cache_hdr size: " << sizeof(cache_store_hdr_t) << " strkey: " << sizeof(struct cache_store_hdr) ;
+		
+		if(read_size == 0) break; //eof
+		
+		if(read_size != sizeof(cache_store_hdr_t)){
+			logger << log4cpp::Priority::ERROR << "cache may be corrupted,skip cache";
+			return -1;
+		}
+
+		result=processcachebuf(buf,cache_f);
+
+	}while(read_size>0);
+	
+	close(cache_f);
+	return 0;
+
+ }
+
+
 void process_netflow_packet(u_int8_t* packet, u_int len, std::string client_addres_in_string_format) {
     struct NF_HEADER_COMMON* hdr = (struct NF_HEADER_COMMON*)packet;
 
@@ -1146,6 +1479,7 @@ void start_netflow_collector(std::string netflow_host, unsigned int netflow_port
            << netflow_port << " udp port";
 
     unsigned int udp_buffer_size = 65536;
+	int result;
     char udp_buffer[udp_buffer_size];
 
     struct addrinfo hints;
@@ -1197,6 +1531,18 @@ void start_netflow_collector(std::string netflow_host, unsigned int netflow_port
     tv.tv_usec = 0;  // Not init'ing this can cause strange errors
 
     setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, (char *)&tv, sizeof(struct timeval));
+
+	//loading cache file, rebuild the template,if exist	
+	
+	result=filetocache();
+	if(result==0){
+		logger << log4cpp::Priority::INFO << "loading cache success";
+	}else{
+		logger << log4cpp::Priority::INFO << "loading code: " << result;
+	}
+
+	//process the template struct
+	boost::thread thrd(&dump_template_cache);
 
     while (true) {
         // This approach provide ability to store both IPv4 and IPv6 client's addresses
